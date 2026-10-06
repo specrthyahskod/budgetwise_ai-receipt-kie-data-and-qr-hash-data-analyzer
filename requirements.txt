@@ -1,0 +1,9 @@
+torch>=2.0
+transformers>=4.40
+datasets>=2.18
+evaluate>=0.4
+seqeval>=1.2
+pillow>=10.0
+pytesseract>=0.3.10
+pyzbar>=0.1.9
+sentencepiece>=0.2.0

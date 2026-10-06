@@ -1,0 +1,16 @@
+# Raw/processed receipt data — never commit real receipt images or any
+# data that could contain personal purchase history
+raw/
+data/
+model_out/
+*.jpg
+*.jpeg
+*.png
+!docs/*.png
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+.DS_Store
