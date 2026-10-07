@@ -1,97 +1,144 @@
-# bill-recognition-model
+```markdown
+# Bill Recognition Model 🧾
 
-A trained model for extracting structured fields (vendor, date, address, total) from
-photographed receipts — the recognition engine behind BudgetWise AI's receipt scanner.
+A trained AI model that reads photographed receipts and extracts key details like the **store name, date, address, and total amount**.
 
-## Why I built this
+This is the machine learning engine behind the receipt scanner feature in my main app, [BudgetWise AI](https://github.com/specrthyahskod/BudgetWise-AI).
 
-My [BudgetWise AI](https://github.com/specrthyahskod/BudgetWise-AI) project had a regex-based
-receipt parser, which works on clean, standard-layout receipts but breaks down on anything
-crumpled, skewed, or laid out unusually — which is most real receipts. I wanted to replace it
-with an actual trained model rather than more regex patches.
+---
 
-## The task
+## Why I Built This
 
-This is a **Key Information Extraction (KIE)** problem: given the words on a receipt and their
-positions, label each word as belonging to `COMPANY`, `DATE`, `ADDRESS`, `TOTAL`, or nothing.
-It's framed as **token classification**, the same family of task as named-entity recognition,
-except the model also sees each word's spatial position on the page — critical here, because
-"TOTAL" sitting next to a number in the bottom-right of a receipt is a strong signal a
-text-only model can't see.
+In my main BudgetWise AI app, I originally used simple text pattern matching (regex) to pull details from receipts. That worked okay on clean, digital receipts, but in real life, paper receipts get crumpled, folded, faded, or printed in unusual layouts.
 
-QR code decoding (also part of the scanner) is **not** part of this model — it's a
-deterministic algorithm (`pyzbar`), included in `inference.py` but not trained.
+Instead of constantly writing more regex rules every time a receipt failed to read, I built this model so the app can actually understand the visual layout and text of a receipt just like a human does.
 
-## Model
+---
 
-**LayoutLMv3-base** (Microsoft, via Hugging Face `transformers`), fine-tuned rather than
-trained from scratch. It takes text, bounding boxes, *and* the receipt image itself as input,
-which matters here more than for plain-text NLP tasks — a human reading a receipt uses layout
-constantly, and this model does too.
+## How It Works
 
-I chose fine-tuning over training from scratch because the base model already understands
-general document layout from large-scale pretraining; a receipt dataset of ~1,000 images is
-nowhere near enough to learn that from zero, but is enough to adapt an existing model to this
-specific task.
+This project solves what is called **Key Information Extraction (KIE)**.
+
+When you look at a receipt, you don't just read the words—you look at *where* they are on the page. For example, a number next to the word "TOTAL" at the bottom right is almost certainly the final price.
+
+The model reads two things at the same time:
+1. The **text** recognized from the receipt.
+2. The **visual position** (coordinates and bounding boxes) of each word on the image.
+
+It then labels each word into one of these categories:
+- `COMPANY` (Store or merchant name)
+- `DATE` (Transaction date)
+- `ADDRESS` (Store location)
+- `TOTAL` (Final amount paid)
+- `O` (Other / irrelevant text)
+
+*(Note: QR code decoding is also included in the inference script via `pyzbar` for digital invoices, but that uses standard barcode reading rather than this machine learning model.)*
+
+---
+
+## The Model
+
+I used **LayoutLMv3-base** from Microsoft (via Hugging Face).
+
+Instead of training a model from scratch—which requires huge computing power and tens of thousands of images—I used **transfer learning (fine-tuning)**. LayoutLMv3 was already pre-trained on millions of document pages to understand general layouts. I fine-tuned it on labeled receipt data so it specializes in store bills.
+
+---
 
 ## Dataset
 
-[SROIE](https://rrc.cvc.uab.es/?ch=13) (ICDAR 2019 Scanned Receipts OCR and Information
-Extraction) — ~1,000 labeled receipts, the standard benchmark for this task. **Not included in
-this repo** (see Limitations) — download it separately and point `prepare_dataset.py` at it.
+I used the **SROIE dataset** (from the ICDAR 2019 competition), which has around 1,000 scanned receipts with labeled text boxes.
 
-## Pipeline
+*Because of dataset size and licensing rules, the raw dataset is not hosted directly inside this repo. You can download SROIE separately and run the preprocessing script below.*
+
+---
+
+## Project Flow
+
 
 ```
-raw SROIE data (images + boxes + entity labels)
-        │
-        ▼   scripts/prepare_dataset.py
-data/processed.jsonl  (BIO-tagged words + normalized bounding boxes)
-        │
-        ▼   scripts/train.py
-model_out/final/  (fine-tuned LayoutLMv3 checkpoint)
-        │
-        ▼   scripts/inference.py
-{ "COMPANY": ..., "DATE": ..., "TOTAL": ..., "qr_payload": ... }
+
+Raw SROIE Dataset (images + labeled boxes)
+│
+▼  scripts/prepare_dataset.py
+data/processed.jsonl (words + bounding box coordinates)
+│
+▼  scripts/train.py
+model_out/final/ (fine-tuned LayoutLMv3 model)
+│
+▼  scripts/inference.py
+Output: { "COMPANY": ..., "DATE": ..., "TOTAL": ..., "qr_payload": ... }
+
 ```
 
-### Running it
+---
 
+## How to Run It
+
+### 1. Setup
+Install the required dependencies:
 ```bash
 pip install -r requirements.txt
 
-# 1. Convert raw SROIE data (adjust --raw-dir to wherever you extracted it)
-python scripts/prepare_dataset.py --raw-dir raw --out data/processed.jsonl
-
-# 2. Spot-check label quality before spending compute on training
-python scripts/prepare_dataset.py --raw-dir raw --sample 5
-
-# 3. Fine-tune (Google Colab T4 GPU recommended — CPU will be very slow)
-python scripts/train.py --data data/processed.jsonl --epochs 15
-
-# 4. Run on a new receipt
-python scripts/inference.py path/to/receipt.jpg --model model_out/final
 ```
 
-## Evaluation
+### 2. Prepare the Data
 
-Reported via seqeval during training: precision, recall, and F1 per entity type, plus overall
-token accuracy. [Fill in your actual numbers here once trained — this is the section a
-reviewer will look at most closely, so don't leave it blank or vague.]
+Convert the raw dataset into the format the model expects:
 
-## Limitations
+```bash
+# Convert raw data (point --raw-dir to your downloaded SROIE folder)
+python scripts/prepare_dataset.py --raw-dir raw --out data/processed.jsonl
 
-- SROIE is dominated by Southeast Asian retail receipt formats. Performance on Australian
-  receipts (Coles/Woolworths/campus bookshops) is untested until fine-tuned further on
-  self-collected, de-identified Australian receipt photos.
-- The `assign_label` heuristic in `prepare_dataset.py` matches entity text against OCR'd lines
-  via substring matching, which is imperfect — some fraction of training labels are wrong, and
-  I corrected this by [describe what you actually did: manual review of N samples, a stricter
-  matching threshold, etc. — fill in honestly once you've done it].
-- No raw receipt images or the SROIE dataset are committed to this repo (see `.gitignore`) —
-  check SROIE's license terms before redistributing it, and never commit real users' receipt
-  photos regardless of license, since they can contain personal purchase history.
+# Preview 5 samples to make sure labels look right
+python scripts/prepare_dataset.py --raw-dir raw --sample 5
+
+```
+
+### 3. Train the Model
+
+Train the model (Google Colab with a free T4 GPU is recommended):
+
+```bash
+python scripts/train.py --data data/processed.jsonl --epochs 15
+
+```
+
+### 4. Test on a Receipt
+
+Run inference on any receipt image to extract the fields:
+
+```bash
+python scripts/inference.py path/to/receipt.jpg --model model_out/final
+
+```
+
+---
+
+## Results & Accuracy
+
+I evaluated the model using standard precision, recall, and F1 scores on the validation set:
+
+* **Overall Token Accuracy:** [Fill your accuracy, e.g., 94%]
+* **Store Name (COMPANY) F1:** [Fill your score, e.g., 88%]
+* **Date F1:** [Fill your score, e.g., 91%]
+* **Total Amount F1:** [Fill your score, e.g., 85%]
+
+*(Replace bracketed numbers with your actual training output)*
+
+---
+
+## Current Limitations
+
+* **Different Receipt Styles:** SROIE mostly features retail receipts from Southeast Asia. Australian store receipts (like Coles, Woolworths, or campus shops) can have slightly different layouts. I plan to collect local test samples to fine-tune it further.
+* **OCR Label Matching:** The script that matches ground-truth text to OCR bounding boxes uses substring matching, which can occasionally mislabel words if the OCR makes a spelling typo.
+* **Privacy:** To protect user privacy, never upload real receipts containing personal names, card numbers, or sensitive purchase history to this repository.
+
+---
 
 ## License
 
-MIT.
+MIT
+
+```
+
+```
